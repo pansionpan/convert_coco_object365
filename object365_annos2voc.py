@@ -8,44 +8,66 @@ import subprocess
 import argparse
 import glob
 from tqdm import tqdm
+import time
 
 """
 提取每个图片对应的category与bbox值，写入json然后转成需要的VOC格式
 """
 
 # cellphone:79 key:266 handbag:13 laptop:77
-classes_names = {79: "cellphone", 266: "key", 13: "handbag", 77: "laptop"}
+# classes_names = {79: "cellphone", 266: "key", 13: "handbag", 77: "laptop"}
+# classes_names = {79: "cell phone", 13: "handbag", 77: "laptop"}
 
-def save_annotations(anno_file_path, imgs_file_path, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset):
+def save_annotations(classes_names, anno_file_path, imgs_file_path, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset):
+    print(classes_names)
     # open json file(val.json or train.json)
+    print("json load:", anno_file_path)
     with open(anno_file_path, 'r') as f:
         data = json.load(f)
-        print("提取长度:", len(data["annotations"]))
-        # iterate all annotations imformation
-        for i in range(0, len(data["annotations"])):
-            # check category class whether in the classes list
-            if data["annotations"][i]["category_id"] in classes_names.keys():
-                # find the image id which class meet the confitions
-                class_imgs_id = data["annotations"][i]["image_id"]
-                print("class_imgs_id:", class_imgs_id)
-                for j in range(0, len(data["images"])):
-                    objs = []
-                    if class_imgs_id == data["images"][j]["id"]:
-                        print(data["images"][j]["file_name"])
-                        # img_path use to find the image path
-                        img_path = os.path.join(imgs_file_path, data["images"][j]["file_name"])
-                        # bbox
-                        bbox = data["annotations"][i]["bbox"]
-                        xmin = int(bbox[0])
-                        ymin = int(bbox[1])
-                        xmax = int(bbox[2] + bbox[0])
-                        ymax = int(bbox[3] + bbox[1])
-                        class_name = classes_names.get(int(data["annotations"][i]["category_id"]))
-                        obj = [class_name, xmin, ymin, xmax, ymax, class_name]
-                        objs.append(obj)
+        # 900w+
+        print("anno count:", len(data["annotations"]))
+        print("image count:", len(data["images"]))
 
-                        img_name = os.path.basename(img_path)
-                        save_head(objs, img_name, img_path, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset)
+        # 使用字典，只进行一遍json文件遍历节省时间
+        img_map = {}
+        img_2_anno = {}
+        for i in data["images"]:
+            img_map[i["id"]] = i
+            img_2_anno[i["id"]] = []
+
+        for anno in data["annotations"]:
+            if anno["category_id"] in classes_names.keys():
+                img_2_anno[anno["image_id"]].append(anno)
+
+        for _, id in enumerate(img_2_anno):
+            annos = img_2_anno[id]
+            if len(annos) > 0:
+                # print("id:", id, "annos:", annos)
+                time_start = time.time()
+                img = img_map[id]
+                img_name = img["file_name"]
+                img_width = img["width"]
+                img_height = img["height"]
+
+                objs = []
+                for anno in annos:
+                    # print("anno:", anno)
+                    print(img["file_name"])
+                    # img_path use to find the image path
+                    # bbox
+                    bbox = anno["bbox"]
+                    xmin = max(int(bbox[0]), 0)
+                    ymin = max(int(bbox[1]), 0)
+                    xmax = min(int(bbox[2] + bbox[0]), img_width)
+                    ymax = min(int(bbox[3] + bbox[1]), img_height)
+                    class_name = classes_names[anno["category_id"]]
+                    obj = [class_name, xmin, ymin, xmax, ymax]
+                    objs.append(obj)
+                
+                save_head(objs, imgs_file_path, img_name, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset, img_width, img_height)
+
+                time_end = time.time()
+                print("img id", id, "time(s)", time_end - time_start)
 
     print(" 提取完成 ")
 
@@ -63,46 +85,31 @@ def write_txt(output_dir, anno_path, img_path, dataset):
             print(fs)
     with open(list_name, 'r', encoding='utf-8') as list_fs:
         with open(list_name, 'a+', encoding='utf-8') as list_f:
-            lines = anno_path + "\t" + img_path + "\n"
+            lines = os.path.basename(anno_path) + "\t" + img_path + "\n"
             list_f.write(lines)
-
 
 
 def write_xml(anno_path, objs, img_path, output_dir, head, objectstr, tailstr, dataset):
     print(anno_path)
-    # 如果xml第一次被写入则直接写入即可
-    if not os.path.exists(anno_path):
-        with open(anno_path, 'w') as f:
-            f.write(head)
-            for obj in objs:
-                f.write(objectstr % (obj[0], obj[1], obj[2], obj[3], obj[4]))
-            f.write(tailstr)
-            write_txt(output_dir, anno_path, img_path, dataset)
-    # 如果classes则追加写入
-    else:
-        with open(anno_path, 'r', encoding='utf-8') as fs:
-            content = fs.read()
-            with open(anno_path, 'w', encoding='utf-8') as f:
-                end_annotation = content.rfind("</annotation>")
-                print(end_annotation)
-                f.write(content[:-14])
-                for obj in objs:
-                    f.write(objectstr % (obj[0], obj[1], obj[2], obj[3], obj[4]))
-                f.write(tailstr)
-    # write_txt(output_dir, anno_path, img_path, dataset, classes_name)
+    with open(anno_path, 'w') as f:
+        f.write(head)
+        for obj in objs:
+            f.write(objectstr % (obj[0], obj[1], obj[2], obj[3], obj[4]))
+        f.write(tailstr)
+        write_txt(output_dir, anno_path, img_path, dataset)
 
 
-def save_head(objs, img_name, img_path, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset):
-    imgs = cv2.imread(img_path)
+def save_head(objs, imgs_file_path, img_name, output_anno_dir, output_dir, headstr, tailstr, objectstr, dataset, img_width, img_height):
+    # imgs = cv2.imread(os.path.join(imgs_file_path, img_name))
     anno_path = os.path.join(output_anno_dir, img_name[:-3] + "xml")
     print("anno_path:", anno_path)
 
-    if (imgs.shape[2] == 1):
-        print(img_name + " not a RGB image")
-        return
+    # if (imgs.shape[2] == 1):
+    #     print(img_name + " not a RGB image")
+    #     return
 
-    head = headstr % (img_name, imgs.shape[1], imgs.shape[0], imgs.shape[2])
-    write_xml(anno_path, objs, img_path, output_dir, head, objectstr, tailstr, dataset)
+    head = headstr % (img_name, img_width, img_height, 3)
+    write_xml(anno_path, objs, img_name, output_dir, head, objectstr, tailstr, dataset)
 
 
 def find_anno_img(input_dir):
@@ -112,16 +119,28 @@ def find_anno_img(input_dir):
     return anno_dir, img_dir
 
 
-def main_object365(input_dir, output_dir, headstr, tailstr, objectstr):
+def main_object365(classes, input_dir, output_dir, headstr, tailstr, objectstr):
+    # use ids match classes
+    classes_names = {}
+    with open("./object365_dict.txt", 'r') as f:
+        print(classes)
+        for line in f:
+            (key, value) = line.strip().split(":")
+            if not classes:
+                classes_names[int(key)] = value
+
+            if key in classes:
+                classes_names[int(key)] = value
+
     anno_dir, img_dir = find_anno_img(input_dir)
-    for dataset in ["val"]:
+    for dataset in ["val", "train"]:
         # xml output dir path
-        output_anno_dir = os.path.join(output_dir, "annotations_xml_{}".format(dataset))
+        output_anno_dir = os.path.join(output_dir, dataset)
         if not os.path.exists(output_anno_dir):
             mkr(output_anno_dir)
 
         # read jsons file
-        anno_file_path = os.path.join(anno_dir, "{}".format(dataset), "{}".format(dataset)+".json")
+        anno_file_path = os.path.join(anno_dir, dataset, dataset+".json")
         # read imgs file
-        imgs_file_path = os.path.join(img_dir, "{}".format(dataset))
-        save_annotations(anno_file_path, imgs_file_path, output_anno_dir, output_dir,headstr, tailstr, objectstr, dataset)
+        imgs_file_path = os.path.join(img_dir, dataset)
+        save_annotations(classes_names, anno_file_path, imgs_file_path, output_anno_dir, output_dir,headstr, tailstr, objectstr, dataset)

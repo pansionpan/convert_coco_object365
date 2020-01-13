@@ -69,11 +69,11 @@ def main():
     # anno_dir = os.path.join(output_dir, "annotations")
 
     if dataset == "object365":
-        #  python main.py -p object365 -i "C:\kuangshi\Objects365" -o "C:\kuangshi\result/"
+        #  python main.py -d object365 -i "C:\kuangshi\Objects365\Images\val\val\val" -o "C:\kuangshi\result/"
         # paramter: headstr, tailstr, objstr, input_dir, anno_dir, output_dir
-        main_object365(input_dir, output_dir, headstr, tailstr, objstr)
+        main_object365(classes, input_dir, output_dir, headstr, tailstr, objstr)
     elif dataset == "coco":
-        # python main.py -p coco -i "C:\coco" -o "C:\coco\result/" -y 2014
+        # python main.py -p coco -i "C:\coco\val2014" -o "C:\coco\val2014\result/"
         if dyear == "":
             print("dataset-year is required")
             exit(1)
